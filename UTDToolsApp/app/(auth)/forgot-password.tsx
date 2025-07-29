@@ -228,7 +228,7 @@ export default function ForgotPasswordScreen() {
                         <View style={styles.infoCard}>
                             <Feather name="info" size={20} color="#17A67D" />
                             <Text style={styles.infoText}>
-                                Se enviará una nueva contraseña temporal a tu correo electrónico.
+                                Se enviará una nueva contraseña a tu correo electrónico.
                             </Text>
                         </View>
 
