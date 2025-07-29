@@ -22,7 +22,7 @@ const StudentsTable = ({ students, onViewProfile, onToggleStatus, onEdit, onDele
               <TableHead className="text-custom-gold px-3 py-3 hidden md:table-cell whitespace-nowrap min-w-[180px]">Carrera</TableHead>
               <TableHead className="text-custom-gold px-3 py-3 hidden lg:table-cell whitespace-nowrap min-w-[200px]">Email</TableHead>
               <TableHead className="text-custom-gold px-3 py-3 whitespace-nowrap min-w-[90px]">Estado</TableHead>
-              <TableHead className="text-custom-gold px-3 py-3 text-center hidden sm:table-cell whitespace-nowrap min-w-[100px]">ID Huella</TableHead>
+              
               <TableHead className="text-custom-gold px-3 py-3 text-right whitespace-nowrap min-w-[100px]">Acciones</TableHead>
             </TableRow>
           </TableHeader>
@@ -30,20 +30,20 @@ const StudentsTable = ({ students, onViewProfile, onToggleStatus, onEdit, onDele
             {students.map((student) => (
               <TableRow key={student.id} className="hover:bg-muted/20 transition-colors">
                 <TableCell className="font-medium text-foreground px-3 py-3 whitespace-nowrap">{student.studentId}</TableCell>
-                <TableCell 
-                  className="text-foreground hover:underline cursor-pointer px-3 py-3 whitespace-nowrap max-w-[180px] truncate" 
+                <TableCell
+                  className="text-foreground hover:underline cursor-pointer px-3 py-3 whitespace-nowrap max-w-[180px] truncate"
                   onClick={() => onViewProfile(student.id)}
                   title={student.name}
                 >
                   {student.name}
                 </TableCell>
-                <TableCell 
+                <TableCell
                   className="text-muted-foreground hidden md:table-cell px-3 py-3 whitespace-nowrap max-w-[180px] truncate"
                   title={student.career}
                 >
                   {student.career}
                 </TableCell>
-                <TableCell 
+                <TableCell
                   className="text-muted-foreground hidden lg:table-cell px-3 py-3 whitespace-nowrap max-w-[200px] truncate"
                   title={student.email}
                 >
@@ -56,23 +56,46 @@ const StudentsTable = ({ students, onViewProfile, onToggleStatus, onEdit, onDele
                     {student.status}
                   </span>
                 </TableCell>
-                <TableCell className="text-center text-muted-foreground hidden sm:table-cell px-3 py-3 whitespace-nowrap">{student.fingerprintId || 'N/A'}</TableCell>
+               
                 <TableCell className="text-right px-3 py-3">
                   <div className="flex flex-col items-end space-y-0.5 xs:flex-row xs:space-y-0 xs:space-x-0.5 xs:items-center xs:justify-end">
                     <div className="flex justify-end gap-0.5">
-                      <Button variant="ghost" size="icon" onClick={() => onViewProfile(student.id)} className="text-primary hover:text-primary/80 h-7 w-7">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => onViewProfile(student.id)}
+                        className="text-primary hover:text-primary/80 h-7 w-7"
+                        title="Ver perfil"
+                      >
                         <Eye className="h-4 w-4" />
                       </Button>
-                      <Button variant="ghost" size="icon" onClick={() => onToggleStatus(student.id)}
-                        className={`${student.status === 'Activo' ? "text-red-500 hover:text-red-400" : "text-green-500 hover:text-green-400"} h-7 w-7`}>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => onToggleStatus(student.id)}
+                        className={`${student.status === 'Activo' ? "text-red-500 hover:text-red-400" : "text-green-500 hover:text-green-400"} h-7 w-7`}
+                        title={student.status === 'Activo' ? 'Bloquear' : 'Activar'}
+                      >
                         {student.status === 'Activo' ? <UserX className="h-4 w-4" /> : <UserCheck className="h-4 w-4" />}
                       </Button>
                     </div>
                     <div className="flex justify-end gap-0.5">
-                      <Button variant="ghost" size="icon" onClick={() => onEdit(student)} className="text-blue-500 hover:text-blue-400 h-7 w-7">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => onEdit(student)}
+                        className="text-blue-500 hover:text-blue-400 h-7 w-7"
+                        title="Editar"
+                      >
                         <Edit className="h-4 w-4" />
                       </Button>
-                      <Button variant="ghost" size="icon" onClick={() => onDelete(student)} className="text-destructive hover:text-destructive/80 h-7 w-7">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => onDelete(student)}
+                        className="text-destructive hover:text-destructive/80 h-7 w-7"
+                        title="Eliminar"
+                      >
                         <Trash2 className="h-4 w-4" />
                       </Button>
                     </div>

@@ -1,10 +1,9 @@
-
-import React, { useEffect, useState } from 'react';
-import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
+import React from 'react';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from '@/components/ui/toaster';
-import { useToast } from '@/components/ui/use-toast';
+import { Loader2 } from 'lucide-react';
 
-import { AuthProvider } from '@/contexts/AuthContext'; // Asegúrate de tenerlo creado
+import { AuthProvider, useAuth } from '@/contexts/AuthContext';
 
 import LoginPage from '@/pages/LoginPage';
 import DashboardPage from '@/pages/DashboardPage';
@@ -19,168 +18,236 @@ import StudentProfilePage from '@/pages/StudentProfilePage';
 import AdminProfilePage from '@/pages/AdminProfilePage';
 import NewLoanPage from '@/pages/NewLoanPage';
 
+// Componente de protección de rutas mejorado
+const ProtectedRoute = ({ children, requiredRole = null }) => {
+  const { user, loading } = useAuth();
 
+  console.log('ProtectedRoute - User:', user?.email, 'Role:', user?.role, 'Loading:', loading);
 
-
-const AppRoutes = () => {
-  const { toast } = useToast();
-  const navigate = useNavigate();
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [currentUser, setCurrentUser] = useState(null);
-  const [token, setToken] = useState(null);
-
-useEffect(() => {
-  const storedToken = localStorage.getItem('token');
-  const storedUser = localStorage.getItem('currentUser');
-
-  if (storedToken && storedUser) {
-    try {
-      setToken(storedToken);
-      setIsAuthenticated(true);
-      setCurrentUser(JSON.parse(storedUser));
-    } catch (err) {
-      console.error('Error parsing user from localStorage:', err);
-    }
-  } else {
-    // Si no hay token guardado, intenta refrescar
-    const refreshSession = async () => {
-      console.log('🔄 Intentando refrescar sesión...');
-      try {
-        const res = await fetch('http://localhost:3000/api/auth/refresh', {
-          method: 'GET',
-          credentials: 'include', // 👈 importante
-        });
-
-        if (!res.ok) {
-          throw new Error('No se pudo refrescar el token');
-        }
-
-        const data = await res.json();
-
-        if (!data.accessToken || !data.user) {
-          throw new Error('Respuesta incompleta del servidor');
-        }
-
-        localStorage.setItem('token', data.accessToken);
-        localStorage.setItem('currentUser', JSON.stringify(data.user));
-        setToken(data.accessToken);
-        setCurrentUser(data.user);
-        setIsAuthenticated(true);
-
-        toast({
-          title: 'Sesión restaurada',
-          description: `Bienvenido de nuevo ${data.user.name || data.user.email}`,
-        });
-      } catch (err) {
-        console.warn('🔐 No se pudo restaurar sesión:', err.message);
-        setIsAuthenticated(false);
-        setToken(null);
-        setCurrentUser(null);
-      }
-    };
-
-    refreshSession();
+  // Mostrar loading mientras se verifica la autenticación
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="text-center">
+          <Loader2 className="h-12 w-12 animate-spin mx-auto text-primary" />
+          <p className="mt-4 text-muted-foreground">Verificando autenticación...</p>
+        </div>
+      </div>
+    );
   }
-}, []);
 
-  const handleLogin = async (email, password) => {
-  try {
-    const endpoint = `http://localhost:3000/api/auth/login/supervisor`;
-    const res = await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include', // por si usas cookies para refreshToken
-      body: JSON.stringify({ email, password }),
-    });
-
-    if (!res.ok) {
-      throw new Error('Credenciales inválidas');
-    }
-
-    const data = await res.json();
-
-    if (!data.supervisor) {
-      throw new Error('No se recibió el supervisor desde el servidor.');
-    }
-
-    localStorage.setItem('token', data.accessToken); 
-    localStorage.setItem('currentUser', JSON.stringify(data.supervisor));
-    setToken(data.accessToken);
-    setCurrentUser(data.supervisor);
-    setIsAuthenticated(true);
-
-    toast({
-      title: 'Login exitoso',
-      description: `Bienvenido ${data.supervisor.name || data.supervisor.email}`,
-    });
-
-    return true;
-  } catch (err) {
-    toast({
-      title: 'Error de login',
-      description: err.message || 'Algo salió mal',
-      variant: 'destructive',
-    });
-    return false;
+  // Si no hay usuario autenticado, redirigir al login
+  if (!user) {
+    console.log('ProtectedRoute - No user, redirecting to login');
+    return <Navigate to="/login" replace />;
   }
+
+  // Verificar rol si es requerido
+  if (requiredRole && user.role !== requiredRole && !['admin', 'supervisor'].includes(user.role)) {
+    console.log(`ProtectedRoute - Access denied. Required: ${requiredRole}, User role: ${user.role}`);
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="text-center">
+          <div className="text-6xl mb-4">🚫</div>
+          <h1 className="text-2xl font-bold mb-2">Acceso Denegado</h1>
+          <p className="text-muted-foreground">
+            No tienes permisos para acceder a esta página.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return children;
 };
 
-  const handleLogout = () => {
-    localStorage.removeItem('token');
-    localStorage.removeItem('currentUser');
-    setToken(null);
-    setCurrentUser(null);
-    setIsAuthenticated(false);
+// Componente de rutas públicas (solo login)
+const PublicRoute = ({ children }) => {
+  const { user, loading } = useAuth();
 
-    toast({
-      title: 'Sesión cerrada',
-      description: 'Has cerrado sesión correctamente.',
-    });
-  };
+  console.log('PublicRoute - User:', user?.email, 'Loading:', loading);
 
-  const renderWithLayout = (Component, props = {}) =>
-    isAuthenticated ? (
-      <Layout onLogout={handleLogout} currentUser={currentUser}>
-        <Component {...props} />
-      </Layout>
-    ) : (
-      <Navigate to="/login" />
+  // Mostrar loading mientras se verifica la autenticación
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="text-center">
+          <Loader2 className="h-12 w-12 animate-spin mx-auto text-primary" />
+          <p className="mt-4 text-muted-foreground">Verificando sesión...</p>
+        </div>
+      </div>
     );
+  }
+
+  // Si ya está autenticado, redirigir al dashboard
+  if (user) {
+    console.log('PublicRoute - User authenticated, redirecting to dashboard');
+    return <Navigate to="/" replace />;
+  }
+
+  return children;
+};
+
+// Componente que renderiza las rutas con Layout
+const LayoutRoute = ({ children }) => {
+  const { user, logout } = useAuth();
+
+  return (
+    <Layout onLogout={logout} currentUser={user}>
+      {children}
+    </Layout>
+  );
+};
+
+const AppRoutes = () => {
+  const { user } = useAuth();
 
   return (
     <Routes>
+      {/* Ruta pública - Login */}
       <Route
         path="/login"
         element={
-          isAuthenticated ? (
-            <Navigate to="/" />
-          ) : (
-            <LoginPage onLogin={handleLogin} />
-          )
+          <PublicRoute>
+            <LoginPage />
+          </PublicRoute>
         }
       />
-      <Route path="/" element={renderWithLayout(DashboardPage)} />
-      <Route path="/students" element={renderWithLayout(StudentsPage)} />
-      <Route path="/students/:studentId" element={renderWithLayout(StudentProfilePage)} />
-      <Route path="/tools" element={renderWithLayout(ToolsPage)} />
-      <Route path="/history" element={renderWithLayout(HistoryPage)} />
-      <Route path="/new-loan" element={renderWithLayout(NewLoanPage, { currentUser })} />
-      <Route path="/return-process" element={renderWithLayout(ReturnProcessPage)} />
-      <Route path="/reports" element={renderWithLayout(ReportsPage)} />
-      <Route path="/overdue-items" element={renderWithLayout(OverdueItemsPage)} />
-      <Route path="/admin-profile" element={renderWithLayout(AdminProfilePage)} />
-      <Route path="*" element={<Navigate to={isAuthenticated ? '/' : '/login'} />} />
+
+      {/* Rutas protegidas */}
+      <Route
+        path="/"
+        element={
+          <ProtectedRoute>
+            <LayoutRoute>
+              <DashboardPage />
+            </LayoutRoute>
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/students"
+        element={
+          <ProtectedRoute>
+            <LayoutRoute>
+              <StudentsPage />
+            </LayoutRoute>
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/students/:studentId"
+        element={
+          <ProtectedRoute>
+            <LayoutRoute>
+              <StudentProfilePage />
+            </LayoutRoute>
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/tools"
+        element={
+          <ProtectedRoute>
+            <LayoutRoute>
+              <ToolsPage />
+            </LayoutRoute>
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/history"
+        element={
+          <ProtectedRoute>
+            <LayoutRoute>
+              <HistoryPage />
+            </LayoutRoute>
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/new-loan"
+        element={
+          <ProtectedRoute requiredRole="supervisor">
+            <LayoutRoute>
+              <NewLoanPage />
+            </LayoutRoute>
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/return-process"
+        element={
+          <ProtectedRoute requiredRole="supervisor">
+            <LayoutRoute>
+              <ReturnProcessPage />
+            </LayoutRoute>
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/reports"
+        element={
+          <ProtectedRoute>
+            <LayoutRoute>
+              <ReportsPage />
+            </LayoutRoute>
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/overdue-items"
+        element={
+          <ProtectedRoute>
+            <LayoutRoute>
+              <OverdueItemsPage />
+            </LayoutRoute>
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/admin-profile"
+        element={
+          <ProtectedRoute>
+            <LayoutRoute>
+              <AdminProfilePage />
+            </LayoutRoute>
+          </ProtectedRoute>
+        }
+      />
+
+      {/* Ruta catch-all - redirige a dashboard si está autenticado, sino a login */}
+      <Route
+        path="*"
+        element={
+          user ? <Navigate to="/" replace /> : <Navigate to="/login" replace />
+        }
+      />
     </Routes>
   );
 };
 
-const App = () => (
-  <BrowserRouter>
-    <AuthProvider>
-      <AppRoutes />
-      <Toaster />
-    </AuthProvider>
-  </BrowserRouter>
-);
+// Componente principal con manejo de errores
+const App = () => {
+  return (
+    <BrowserRouter>
+      <AuthProvider>
+        <div className="min-h-screen bg-background">
+          <AppRoutes />
+          <Toaster />
+        </div>
+      </AuthProvider>
+    </BrowserRouter>
+  );
+};
 
 export default App;

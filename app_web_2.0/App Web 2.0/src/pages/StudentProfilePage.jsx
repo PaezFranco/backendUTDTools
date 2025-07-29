@@ -1,14 +1,12 @@
-
 import React, { useState, useEffect } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
-import { ArrowLeft, User, Mail, Phone, BookOpen, BarChart3, Edit, AlertCircle, CheckCircle, UserX, UserCheck, CalendarPlus, FileText, Fingerprint as FingerprintIcon, Loader2 } from 'lucide-react';
+import { ArrowLeft, User, Mail, Phone, BookOpen, BarChart3, Edit, AlertCircle, CheckCircle, UserX, UserCheck, CalendarPlus, FileText, Fingerprint as FingerprintIcon, Loader2, RefreshCw } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useToast } from '@/components/ui/use-toast';
-
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000/api';
+import { useAuth } from '@/contexts/AuthContext';
 
 const StudentProfilePage = () => {
   const { studentId: routeStudentId } = useParams(); 
@@ -18,6 +16,9 @@ const StudentProfilePage = () => {
   const [loadingLoans, setLoadingLoans] = useState(false);
   const { toast } = useToast();
   const navigate = useNavigate();
+  
+  // Usar el contexto de autenticación
+  const { apiRequest, user } = useAuth();
 
   // Función para mapear datos del backend al formato del frontend
   const mapBackendToFrontend = (backendStudent) => {
@@ -40,7 +41,7 @@ const StudentProfilePage = () => {
 
   // Función para mapear préstamos del backend al formato del frontend
   const mapLoanToFrontend = (loan) => {
-    console.log('Mapping loan:', loan); // Debug log
+    console.log('Mapping loan:', loan);
     
     const loanDate = new Date(loan.loan_date);
     const estimatedReturnDate = new Date(loan.estimated_return_date);
@@ -52,7 +53,7 @@ const StudentProfilePage = () => {
 
     if (loan.status === 'returned') {
       if (actualReturnDate && actualReturnDate > estimatedReturnDate) {
-        status = 'Retraso Leve';
+        status = 'Retraso';
         statusClass = 'bg-yellow-500/20 text-yellow-400';
       } else {
         status = 'OK';
@@ -70,12 +71,34 @@ const StudentProfilePage = () => {
       if (loan.tools_borrowed && Array.isArray(loan.tools_borrowed)) {
         toolNames = loan.tools_borrowed.map(toolBorrowed => {
           const tool = toolBorrowed.tool_id;
+          console.log('Processing tool in loan:', tool);
+          
           if (tool && typeof tool === 'object') {
-            // Si tool_id está populado correctamente
-            return `${tool.name || 'Sin nombre'} (${tool.code || 'Sin código'}) - Cant: ${toolBorrowed.quantity || 1}`;
+            // Intentar obtener el nombre usando los nuevos campos del modelo
+            const toolName = tool.specificName || 
+                            tool.name || 
+                            tool.generalName || 
+                            tool.general_name ||
+                            tool.tool_name ||
+                            'Herramienta sin nombre';
+            
+            // Intentar obtener el código usando los nuevos campos del modelo
+            const toolCode = tool.toolId ||
+                            tool.uniqueId || 
+                            tool.barcode ||
+                            tool.code || 
+                            tool.tool_code ||
+                            tool._id || 
+                            'Sin código';
+            
+            const quantity = toolBorrowed.quantity || 1;
+            
+            return `${toolName} (${toolCode}) - Cant: ${quantity}`;
           } else {
             // Si tool_id no está populado, mostrar el ID
-            return `Herramienta ID: ${tool || toolBorrowed.tool_id} - Cant: ${toolBorrowed.quantity || 1}`;
+            const toolId = tool || toolBorrowed.tool_id;
+            const quantity = toolBorrowed.quantity || 1;
+            return `Herramienta ID: ${toolId} - Cant: ${quantity}`;
           }
         }).join(', ');
       }
@@ -98,25 +121,50 @@ const StudentProfilePage = () => {
     };
   };
 
-  // Función para cargar préstamos del estudiante
+  // Función para cargar préstamos del estudiante con mejor manejo de errores
   const loadStudentLoans = async (studentCode) => {
     try {
       setLoadingLoans(true);
-      console.log(`Loading loans for student code: ${studentCode}`); // Debug log
+      console.log(`Loading loans for student code: ${studentCode}`);
       
-      const response = await fetch(`${API_URL}/loans/student-code/${studentCode}`);
+      // Intentar múltiples endpoints para obtener préstamos
+      let loans = [];
       
-      if (!response.ok) {
-        if (response.status === 404) {
-          console.log('No loans found for student'); // Debug log
-          setLoanHistory([]);
-          return;
+      try {
+        // Intentar endpoint específico por código de estudiante
+        const response = await apiRequest(`/loans/student-code/${studentCode}`);
+        
+        if (response.ok) {
+          loans = await response.json();
+          console.log('Loans loaded from /loans/student-code:', loans);
+        } else if (response.status === 404) {
+          console.log('No loans found for student code, trying alternative endpoint');
+          loans = [];
+        } else {
+          throw new Error(`Error ${response.status}: ${response.statusText}`);
         }
-        throw new Error(`Error al cargar préstamos: ${response.status} ${response.statusText}`);
+      } catch (error) {
+        console.log('Primary endpoint failed, trying alternative approach:', error);
+        
+        try {
+          // Fallback: obtener todos los préstamos y filtrar
+          const allLoansResponse = await apiRequest('/loans');
+          if (allLoansResponse.ok) {
+            const allLoans = await allLoansResponse.json();
+            console.log('All loans loaded, filtering for student:', studentCode);
+            
+            loans = allLoans.filter(loan => {
+              const loanStudentId = loan.student_id?.student_id || loan.student_id?.id;
+              return loanStudentId === studentCode;
+            });
+            
+            console.log('Filtered loans for student:', loans);
+          }
+        } catch (fallbackError) {
+          console.error('Fallback endpoint also failed:', fallbackError);
+          loans = [];
+        }
       }
-
-      const loans = await response.json();
-      console.log('Received loans:', loans); // Debug log
       
       if (!Array.isArray(loans)) {
         console.error('Expected array of loans, received:', typeof loans);
@@ -125,7 +173,10 @@ const StudentProfilePage = () => {
       }
 
       const mappedLoans = loans.map(mapLoanToFrontend);
-      console.log('Mapped loans:', mappedLoans); // Debug log
+      console.log('Mapped loans:', mappedLoans);
+      
+      // Ordenar préstamos por fecha (más recientes primero)
+      mappedLoans.sort((a, b) => new Date(b.dueDate) - new Date(a.dueDate));
       
       setLoanHistory(mappedLoans);
 
@@ -151,20 +202,26 @@ const StudentProfilePage = () => {
 
   useEffect(() => {
     const loadStudent = async () => {
+      // Verificar que el usuario esté autenticado
+      if (!user) {
+        console.log('User not authenticated, waiting...');
+        return;
+      }
+
       try {
         setLoading(true);
-        console.log(`Loading student with ID: ${routeStudentId}`); // Debug log
+        console.log(`Loading student with ID: ${routeStudentId}`);
         
-        const response = await fetch(`${API_URL}/students`);
+        const response = await apiRequest('/students');
         if (!response.ok) {
           throw new Error('Error al cargar estudiantes');
         }
         
         const backendStudents = await response.json();
-        console.log('All students:', backendStudents); // Debug log
+        console.log('All students loaded, searching for ID:', routeStudentId);
         
         const foundStudent = backendStudents.find(s => s._id === routeStudentId);
-        console.log('Found student:', foundStudent); // Debug log
+        console.log('Found student:', foundStudent);
         
         if (foundStudent) {
           const mappedStudent = mapBackendToFrontend(foundStudent);
@@ -189,10 +246,22 @@ const StudentProfilePage = () => {
       }
     };
 
-    if (routeStudentId) {
+    if (routeStudentId && user) {
       loadStudent();
     }
-  }, [routeStudentId, toast]);
+  }, [routeStudentId, user, toast, apiRequest]);
+
+  // Auto-refresh cada 30 segundos cuando hay préstamos activos
+  useEffect(() => {
+    if (student && student.loans > 0) {
+      const interval = setInterval(() => {
+        console.log('Auto-refreshing loans for active student');
+        loadStudentLoans(student.studentId);
+      }, 30000); // 30 segundos
+
+      return () => clearInterval(interval);
+    }
+  }, [student]);
 
   const handleEditProfile = () => {
     if (student) {
@@ -220,11 +289,8 @@ const StudentProfilePage = () => {
     if (newStatus === 'Bloqueado' && newBlockReason === null) return;
 
     try {
-      const response = await fetch(`${API_URL}/students/block/${student.studentId}`, {
+      const response = await apiRequest(`/students/block/${student.studentId}`, {
         method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-        },
         body: JSON.stringify({
           blocked: newStatus === 'Bloqueado',
           block_reason: newBlockReason || ''
@@ -254,167 +320,376 @@ const StudentProfilePage = () => {
 
   const refreshLoans = async () => {
     if (student && student.studentId) {
+      console.log('Manual refresh of loans requested');
       await loadStudentLoans(student.studentId);
+      toast({
+        title: "Préstamos Actualizados",
+        description: "Se ha actualizado el historial de préstamos del estudiante",
+      });
     }
   };
 
+  // Componente para mostrar préstamos en móvil como tarjetas
+  const LoanCard = ({ loan }) => (
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      className={`bg-white rounded-lg border p-4 shadow-sm ${
+        loan.status === 'Activo' || loan.status === 'Vencido' ? 'border-orange-200 bg-orange-50/30' : 'border-gray-200'
+      }`}
+    >
+      <div className="flex items-start justify-between mb-3">
+        <div className="flex-1 min-w-0">
+          <h4 className="font-medium text-gray-900 text-sm leading-tight">{loan.toolName}</h4>
+          <div className="flex items-center gap-2 mt-1">
+            <span className="text-xs text-gray-500">{loan.loanDate}</span>
+            <span className="text-xs text-gray-400">•</span>
+            <span className="text-xs text-gray-500">{loan.loanTime}</span>
+          </div>
+        </div>
+        <span className={`px-2 py-1 text-xs font-semibold rounded-full ${loan.statusClass} flex-shrink-0`}>
+          {loan.status}
+        </span>
+      </div>
+      
+      <div className="space-y-2 text-xs">
+        <div className="flex items-center justify-between">
+          <span className="text-gray-600">Fecha límite:</span>
+          <span className="font-medium text-gray-900">
+            {new Date(loan.dueDate).toLocaleDateString('es-ES')}
+          </span>
+        </div>
+        <div className="flex items-center justify-between">
+          <span className="text-gray-600">Hora límite:</span>
+          <span className="font-medium text-gray-900">
+            {new Date(loan.dueDate).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}
+          </span>
+        </div>
+        {loan.returnDate && (
+          <div className="flex items-center justify-between">
+            <span className="text-gray-600">Devuelto:</span>
+            <span className="font-medium text-green-600">
+              {new Date(loan.returnDate).toLocaleDateString('es-ES')}
+            </span>
+          </div>
+        )}
+      </div>
+    </motion.div>
+  );
+
+  // Mostrar loading si no hay usuario autenticado
+  if (!user) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-4">
+        <div className="text-center">
+          <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4 text-teal-600" />
+          <p className="text-gray-600">Verificando autenticación...</p>
+        </div>
+      </div>
+    );
+  }
+
   if (loading) {
     return (
-      <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
-        <Loader2 className="w-16 h-16 mb-4 animate-spin text-primary" />
-        <h2 className="text-2xl font-semibold">Cargando perfil del estudiante...</h2>
+      <div className="min-h-screen flex items-center justify-center p-4">
+        <div className="text-center">
+          <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4 text-teal-600" />
+          <p className="text-gray-600">Cargando perfil del estudiante...</p>
+        </div>
       </div>
     );
   }
 
   if (!student) {
     return (
-      <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
-        <AlertCircle className="w-16 h-16 mb-4 text-destructive" />
-        <h2 className="text-2xl font-semibold">Estudiante no encontrado</h2>
-        <p className="mb-4">No se pudo encontrar información para el ID: {routeStudentId}</p>
-        <Button asChild variant="outline">
-          <Link to="/students"><ArrowLeft className="mr-2 h-4 w-4" /> Volver a Estudiantes</Link>
-        </Button>
+      <div className="min-h-screen flex items-center justify-center p-4">
+        <div className="text-center max-w-md mx-auto">
+          <AlertCircle className="h-16 w-16 mx-auto mb-4 text-red-500" />
+          <h2 className="text-xl font-semibold mb-2">Estudiante no encontrado</h2>
+          <p className="text-gray-600 mb-4">No se pudo encontrar información para el ID: {routeStudentId}</p>
+          <Button asChild variant="outline">
+            <Link to="/students">
+              <ArrowLeft className="mr-2 h-4 w-4" /> 
+              Volver a Estudiantes
+            </Link>
+          </Button>
+        </div>
       </div>
     );
   }
 
   return (
-    <motion.div 
-      className="space-y-6"
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      transition={{ duration: 0.5 }}
-    >
-      <div className="flex items-center justify-between">
-        <Button asChild variant="outline" className="border-primary text-primary hover:bg-primary/10">
-          <Link to="/students"><ArrowLeft className="mr-2 h-4 w-4" /> Volver a Estudiantes</Link>
-        </Button>
-        <h1 className="text-3xl font-bold text-gradient-gold-teal">Perfil del Estudiante</h1>
+    <div className="min-h-screen bg-gray-50">
+      {/* Header móvil */}
+      <div className="bg-white border-b border-gray-200 px-4 py-3 sm:hidden">
+        <div className="flex items-center justify-between">
+          <Button asChild variant="ghost" size="sm">
+            <Link to="/students">
+              <ArrowLeft className="h-4 w-4" />
+            </Link>
+          </Button>
+          <h1 className="text-lg font-semibold text-teal-700">Perfil del Estudiante</h1>
+          <div className="w-8" /> {/* Spacer */}
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <motion.div 
-          className="lg:col-span-1"
-          initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.1 }}
-        >
-          <Card className="bg-card shadow-lg">
-            <CardHeader className="items-center text-center">
-              <div className="relative">
-                <img  
-                  className="w-32 h-32 rounded-full mb-4 border-4 border-primary shadow-md object-cover" 
-                  // file deepcode ignore DOMXSS: <please specify a reason of ignoring this>
-                  alt={`Avatar de ${student.name}`} src={student.avatar || "https://images.unsplash.com/photo-1698431048673-53ed1765ea07"} />
-                <span className={`absolute bottom-4 right-2 block h-5 w-5 rounded-full border-2 border-card ${student.status === 'Activo' ? 'bg-green-500' : 'bg-red-500'}`}></span>
-              </div>
-              <CardTitle className="text-2xl text-foreground">{student.name}</CardTitle>
-              <CardDescription className="text-secondary">Matrícula: {student.studentId}</CardDescription>
-              <CardDescription className="text-xs text-muted-foreground">ID Interno: {student.id}</CardDescription>
-              <span className={`mt-2 px-3 py-1 text-sm font-semibold rounded-full ${
-                  student.status === 'Activo' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
-                }`}>
-                  {student.status}
-              </span>
-            </CardHeader>
-            <CardContent className="space-y-3 text-sm">
-              <div className="flex items-center text-muted-foreground"><Mail className="w-4 h-4 mr-2 text-primary" /> <span className="text-foreground">{student.email}</span></div>
-              <div className="flex items-center text-muted-foreground"><Phone className="w-4 h-4 mr-2 text-primary" /> <span className="text-foreground">{student.phone}</span></div>
-              <div className="flex items-center text-muted-foreground"><BookOpen className="w-4 h-4 mr-2 text-primary" /> <span className="text-foreground">{student.career}</span></div>
-              <div className="flex items-center text-muted-foreground"><BarChart3 className="w-4 h-4 mr-2 text-primary" /> <span className="text-foreground">Cuatrimestre: {student.cuatrimestre}</span></div>
-              <div className="flex items-center text-muted-foreground"><CalendarPlus className="w-4 h-4 mr-2 text-primary" /> <span className="text-foreground">Registrado: {new Date(student.registrationDate).toLocaleDateString()}</span></div>
-              <div className="flex items-center text-muted-foreground"><AlertCircle className="w-4 h-4 mr-2 text-primary" /> <span className="text-foreground">Préstamos Activos/Vencidos: {student.loans}</span></div>
-               <div className="flex items-center text-muted-foreground"><FingerprintIcon className="w-4 h-4 mr-2 text-primary" /> <span className="text-foreground">ID Huella: {student.fingerprintId}</span></div>
-              {student.status === 'Bloqueado' && student.blockReason && (
-                <div className="flex items-start text-muted-foreground pt-2 border-t border-border mt-2">
-                    <FileText className="w-4 h-4 mr-2 text-destructive mt-1 flex-shrink-0" /> 
-                    <div>
-                        <span className="font-semibold text-destructive">Motivo de Bloqueo:</span>
-                        <p className="text-foreground text-xs">{student.blockReason}</p>
+      {/* Contenido principal */}
+      <div className="max-w-7xl mx-auto p-4 sm:p-6 lg:p-8">
+        {/* Header desktop */}
+        <div className="hidden sm:flex items-center justify-between mb-6">
+          <Button asChild variant="outline" className="border-teal-600 text-teal-600 hover:bg-teal-600 hover:text-white">
+            <Link to="/students">
+              <ArrowLeft className="mr-2 h-4 w-4" /> 
+              Volver a Estudiantes
+            </Link>
+          </Button>
+          <h1 className="text-2xl sm:text-3xl font-bold text-teal-700">Perfil del Estudiante</h1>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Tarjeta de perfil del estudiante */}
+          <motion.div 
+            className="lg:col-span-1"
+            initial={{ opacity: 0, x: -20 }} 
+            animate={{ opacity: 1, x: 0 }} 
+            transition={{ delay: 0.1 }}
+          >
+            <Card className="bg-white shadow-lg">
+              <CardHeader className="text-center pb-4">
+                <div className="relative mx-auto">
+                  <img  
+                    className="w-24 h-24 sm:w-32 sm:h-32 rounded-full border-4 border-teal-600 shadow-md object-cover mx-auto" 
+                    alt={`Avatar de ${student.name}`} 
+                    src={student.avatar || "https://images.unsplash.com/photo-1698431048673-53ed1765ea07"} 
+                  />
+                  <span className={`absolute bottom-1 right-1 sm:bottom-2 sm:right-2 block h-4 w-4 sm:h-5 sm:w-5 rounded-full border-2 border-white ${
+                    student.status === 'Activo' ? 'bg-green-500' : 'bg-red-500'
+                  }`}></span>
+                </div>
+                <div className="mt-4">
+                  <CardTitle className="text-lg sm:text-xl text-gray-900">{student.name}</CardTitle>
+                  <CardDescription className="text-sm text-gray-600 mt-1">
+                    Matrícula: {student.studentId}
+                  </CardDescription>
+                  <CardDescription className="text-xs text-gray-500 mt-1">
+                    ID: {student.id}
+                  </CardDescription>
+                  <span className={`inline-block mt-3 px-3 py-1 text-sm font-semibold rounded-full ${
+                    student.status === 'Activo' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                  }`}>
+                    {student.status}
+                  </span>
+                </div>
+              </CardHeader>
+              
+              <CardContent className="space-y-4 text-sm">
+                <div className="flex items-center text-gray-600">
+                  <Mail className="w-4 h-4 mr-3 text-teal-600 flex-shrink-0" /> 
+                  <span className="text-gray-900 break-all">{student.email}</span>
+                </div>
+                
+                <div className="flex items-center text-gray-600">
+                  <Phone className="w-4 h-4 mr-3 text-teal-600 flex-shrink-0" /> 
+                  <span className="text-gray-900">{student.phone}</span>
+                </div>
+                
+                <div className="flex items-center text-gray-600">
+                  <BookOpen className="w-4 h-4 mr-3 text-teal-600 flex-shrink-0" /> 
+                  <span className="text-gray-900">{student.career}</span>
+                </div>
+                
+                <div className="flex items-center text-gray-600">
+                  <BarChart3 className="w-4 h-4 mr-3 text-teal-600 flex-shrink-0" /> 
+                  <span className="text-gray-900">Cuatrimestre: {student.cuatrimestre}</span>
+                </div>
+                
+                <div className="flex items-center text-gray-600">
+                  <CalendarPlus className="w-4 h-4 mr-3 text-teal-600 flex-shrink-0" /> 
+                  <span className="text-gray-900">
+                    Registrado: {new Date(student.registrationDate).toLocaleDateString('es-ES')}
+                  </span>
+                </div>
+                
+                <div className="flex items-center text-gray-600">
+                  <AlertCircle className={`w-4 h-4 mr-3 flex-shrink-0 ${
+                    student.loans > 0 ? 'text-orange-500' : 'text-teal-600'
+                  }`} /> 
+                  <span className={`text-gray-900 ${student.loans > 0 ? 'font-semibold text-orange-600' : ''}`}>
+                    Préstamos Activos: {student.loans}
+                  </span>
+                </div>
+
+                {student.status === 'Bloqueado' && student.blockReason && (
+                  <div className="flex items-start text-gray-600 pt-4 border-t border-gray-200">
+                    <FileText className="w-4 h-4 mr-3 text-red-500 mt-1 flex-shrink-0" /> 
+                    <div className="flex-1">
+                      <span className="font-semibold text-red-600 block">Motivo de Bloqueo:</span>
+                      <p className="text-gray-900 text-xs mt-1">{student.blockReason}</p>
                     </div>
-                </div>
-              )}
-            </CardContent>
-            <div className="p-6 pt-0 flex gap-2">
-                <Button onClick={handleEditProfile} variant="outline" className="w-full border-custom-orange text-custom-orange hover:bg-custom-orange/10">
-                    <Edit className="mr-2 h-4 w-4" /> Editar Perfil
-                </Button>
-                 <Button onClick={handleToggleStatus} variant="outline" className={`w-full ${student.status === 'Activo' ? 'border-red-500 text-red-500 hover:bg-red-500/10' : 'border-green-500 text-green-500 hover:bg-green-500/10'}`}>
-                    {student.status === 'Activo' ? <UserX className="mr-2 h-4 w-4" /> : <UserCheck className="mr-2 h-4 w-4" />} 
+                  </div>
+                )}
+              </CardContent>
+              
+              {/* Iconos de acción */}
+              <div className="p-6 pt-0 flex justify-center gap-6">
+                <button
+                  onClick={handleEditProfile}
+                  className="flex flex-col items-center gap-2 p-2 rounded-lg hover:bg-orange-50 transition-colors group"
+                  title="Editar perfil"
+                >
+                  <div className="w-10 h-10 rounded-full bg-orange-100 flex items-center justify-center group-hover:bg-orange-200 transition-colors">
+                    <Edit className="h-5 w-5 text-orange-600" />
+                  </div>
+                  <span className="text-xs text-gray-600 group-hover:text-orange-600 transition-colors">
+                    Editar
+                  </span>
+                </button>
+                
+                <button
+                  onClick={handleToggleStatus}
+                  className={`flex flex-col items-center gap-2 p-2 rounded-lg transition-colors group ${
+                    student.status === 'Activo' 
+                      ? 'hover:bg-red-50' 
+                      : 'hover:bg-green-50'
+                  }`}
+                  title={student.status === 'Activo' ? 'Bloquear estudiante' : 'Activar estudiante'}
+                >
+                  <div className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors ${
+                    student.status === 'Activo'
+                      ? 'bg-red-100 group-hover:bg-red-200'
+                      : 'bg-green-100 group-hover:bg-green-200'
+                  }`}>
+                    {student.status === 'Activo' ? (
+                      <UserX className="h-5 w-5 text-red-600" />
+                    ) : (
+                      <UserCheck className="h-5 w-5 text-green-600" />
+                    )}
+                  </div>
+                  <span className={`text-xs transition-colors ${
+                    student.status === 'Activo'
+                      ? 'text-gray-600 group-hover:text-red-600'
+                      : 'text-gray-600 group-hover:text-green-600'
+                  }`}>
                     {student.status === 'Activo' ? 'Bloquear' : 'Activar'}
-                </Button>
-            </div>
-          </Card>
-        </motion.div>
-
-        <motion.div 
-          className="lg:col-span-2"
-          initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.2 }}
-        >
-          <Card className="bg-card shadow-lg h-full">
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle className="text-xl text-gradient-gold-teal">Historial de Préstamos</CardTitle>
-                  <CardDescription>Registro de todas las herramientas solicitadas por {student.name}.</CardDescription>
-                </div>
-                <Button onClick={refreshLoans} variant="outline" size="sm" disabled={loadingLoans}>
-                  {loadingLoans ? <Loader2 className="w-4 h-4 animate-spin" /> : <AlertCircle className="w-4 h-4" />}
-                  Actualizar
-                </Button>
+                  </span>
+                </button>
               </div>
-            </CardHeader>
-            <CardContent>
-              {loadingLoans ? (
-                <div className="flex items-center justify-center py-8">
-                  <Loader2 className="w-8 h-8 animate-spin text-primary" />
-                  <span className="ml-2 text-muted-foreground">Cargando préstamos...</span>
+            </Card>
+          </motion.div>
+
+          {/* Sección de historial de préstamos */}
+          <motion.div 
+            className="lg:col-span-2"
+            initial={{ opacity: 0, x: 20 }} 
+            animate={{ opacity: 1, x: 0 }} 
+            transition={{ delay: 0.2 }}
+          >
+            <Card className="bg-white shadow-lg h-full">
+              <CardHeader className="pb-4">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                  <div className="flex-1">
+                    <CardTitle className="text-lg sm:text-xl text-teal-700 flex items-center">
+                      Historial de Préstamos
+                    </CardTitle>
+                    <CardDescription className="mt-1">
+                      Registro de herramientas solicitadas por {student.name}.
+                      {student.loans > 0 && (
+                        <span className="text-orange-600 font-medium"> 
+                          ({student.loans} préstamo(s) activo(s))
+                        </span>
+                      )}
+                    </CardDescription>
+                  </div>
+                  <Button 
+                    onClick={refreshLoans} 
+                    variant="outline" 
+                    size="sm" 
+                    disabled={loadingLoans}
+                    className="self-start sm:self-center"
+                  >
+                    {loadingLoans ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <RefreshCw className="w-4 h-4" />
+                    )}
+                    <span className="ml-2">Actualizar</span>
+                  </Button>
                 </div>
-              ) : loanHistory.length > 0 ? (
-                <div className="overflow-x-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead className="text-custom-gold">Herramienta(s)</TableHead>
-                        <TableHead className="text-custom-gold hidden sm:table-cell">Fecha</TableHead>
-                        <TableHead className="text-custom-gold hidden sm:table-cell">Hora</TableHead>
-                        <TableHead className="text-custom-gold">Fecha Límite</TableHead>
-                        <TableHead className="text-custom-gold hidden md:table-cell">Fecha Devolución</TableHead>
-                        <TableHead className="text-custom-gold text-right">Estado</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
+              </CardHeader>
+              
+              <CardContent>
+                {loadingLoans ? (
+                  <div className="flex items-center justify-center py-8">
+                    <Loader2 className="w-8 h-8 animate-spin text-teal-600" />
+                    <span className="ml-2 text-gray-600">Actualizando préstamos...</span>
+                  </div>
+                ) : loanHistory.length > 0 ? (
+                  <>
+                    {/* Vista móvil - Tarjetas */}
+                    <div className="block lg:hidden space-y-4">
                       {loanHistory.map((loan) => (
-                        <TableRow key={loan.id}>
-                          <TableCell className="font-medium text-foreground max-w-xs">
-                            <div className="truncate" title={loan.toolName}>{loan.toolName}</div>
-                          </TableCell>
-                          <TableCell className="text-muted-foreground hidden sm:table-cell">{loan.loanDate}</TableCell>
-                          <TableCell className="text-muted-foreground hidden sm:table-cell">{loan.loanTime}</TableCell>
-                          <TableCell className="text-muted-foreground">{new Date(loan.dueDate).toLocaleString('es-ES')}</TableCell>
-                          <TableCell className="text-muted-foreground hidden md:table-cell">{loan.returnDate ? new Date(loan.returnDate).toLocaleString('es-ES') : 'N/A'}</TableCell>
-                          <TableCell className="text-right">
-                            <span className={`px-2 py-1 text-xs font-semibold rounded-full ${loan.statusClass}`}>
-                              {loan.status}
-                            </span>
-                          </TableCell>
-                        </TableRow>
+                        <LoanCard key={loan.id} loan={loan} />
                       ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              ) : (
-                <div className="text-center py-8">
-                  <AlertCircle className="w-16 h-16 mx-auto mb-4 text-muted-foreground" />
-                  <p className="text-muted-foreground text-lg">Este estudiante no tiene historial de préstamos.</p>
-                  <p className="text-muted-foreground text-sm mt-2">Los préstamos aparecerán aquí una vez que el estudiante solicite herramientas.</p>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </motion.div>
+                    </div>
+
+                    {/* Vista desktop - Tabla */}
+                    <div className="hidden lg:block overflow-x-auto">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead className="text-orange-600">Herramienta(s)</TableHead>
+                            <TableHead className="text-orange-600">Fecha</TableHead>
+                            <TableHead className="text-orange-600">Hora</TableHead>
+                            <TableHead className="text-orange-600">Fecha Límite</TableHead>
+                            <TableHead className="text-orange-600">Fecha Devolución</TableHead>
+                            <TableHead className="text-orange-600 text-right">Estado</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {loanHistory.map((loan) => (
+                            <TableRow 
+                              key={loan.id} 
+                              className={loan.status === 'Activo' || loan.status === 'Vencido' ? 'bg-orange-50' : ''}
+                            >
+                              <TableCell className="font-medium text-gray-900 max-w-xs">
+                                <div className="truncate" title={loan.toolName}>{loan.toolName}</div>
+                              </TableCell>
+                              <TableCell className="text-gray-600">{loan.loanDate}</TableCell>
+                              <TableCell className="text-gray-600">{loan.loanTime}</TableCell>
+                              <TableCell className="text-gray-600">
+                                {new Date(loan.dueDate).toLocaleString('es-ES')}
+                              </TableCell>
+                              <TableCell className="text-gray-600">
+                                {loan.returnDate ? new Date(loan.returnDate).toLocaleString('es-ES') : 'Pendiente'}
+                              </TableCell>
+                              <TableCell className="text-right">
+                                <span className={`px-2 py-1 text-xs font-semibold rounded-full ${loan.statusClass}`}>
+                                  {loan.status}
+                                </span>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-center py-8">
+                    <AlertCircle className="w-12 h-12 sm:w-16 sm:h-16 mx-auto mb-4 text-gray-400" />
+                    <p className="text-gray-600 text-base sm:text-lg mb-2">
+                      Este estudiante no tiene historial de préstamos.
+                    </p>
+                    <p className="text-gray-500 text-sm">
+                      Los préstamos aparecerán aquí una vez que el estudiante solicite herramientas.
+                    </p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </motion.div>
+        </div>
       </div>
-    </motion.div>
+    </div>
   );
 };
 

@@ -1,145 +1,261 @@
-// src/hooks/useTools.js
-import { useState, useEffect } from 'react';
-import { toolsApi } from '../services/toolsApi';
+import { useState, useEffect, useCallback } from 'react';
+import { useAuth } from '@/contexts/AuthContext';
+import { useToast } from '@/components/ui/use-toast';
 
 export const useTools = () => {
+  const { apiRequest } = useAuth();
+  const { toast } = useToast();
+  
   const [tools, setTools] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [isConnected, setIsConnected] = useState(false);
+  const [isConnected, setIsConnected] = useState(true);
 
-  // Función para transformar datos del backend al formato del frontend
-  const transformToolData = (backendTool) => {
-    return {
-      _id: backendTool._id,
-      uniqueId: backendTool.uniqueId || backendTool.barcode,
-      specificName: backendTool.specificName || backendTool.name,
-      category: backendTool.category,
-      generalName: backendTool.generalName || backendTool.model,
-      status: backendTool.status,
-      maintenance_status: backendTool.maintenance_status || backendTool.maintenanceStatus,
-      last_maintenance: backendTool.last_maintenance || backendTool.lastMaintenance,
-      next_maintenance: backendTool.next_maintenance || backendTool.nextMaintenance,
-      usage_count: backendTool.usage_count || backendTool.usageCount || 0,
-      createdAt: backendTool.createdAt,
-      updatedAt: backendTool.updatedAt
-    };
-  };
-
-  // Función para transformar datos del frontend al formato del backend
-  const transformToBackendFormat = (frontendTool) => {
-    return {
-      uniqueId: frontendTool.uniqueId,
-      specificName: frontendTool.specificName,
-      category: frontendTool.category,
-      generalName: frontendTool.generalName,
-      status: frontendTool.status,
-      maintenance_status: frontendTool.maintenance_status,
-      last_maintenance: frontendTool.last_maintenance,
-      next_maintenance: frontendTool.next_maintenance,
-      usage_count: frontendTool.usage_count || 0
-    };
-  };
-
-  // Verificar conexión con el backend
-  const checkConnection = async () => {
+  // Función para verificar conexión
+  const checkConnection = useCallback(async () => {
     try {
-      const connected = await toolsApi.checkConnection();
-      setIsConnected(connected);
-      return connected;
+      const response = await apiRequest('/health');
+      if (response.ok) {
+        setIsConnected(true);
+        setError(null);
+        return true;
+      } else {
+        setIsConnected(false);
+        setError('Sin conexión al servidor');
+        return false;
+      }
     } catch (error) {
+      console.error('Connection check failed:', error);
       setIsConnected(false);
+      setError('Sin conexión al servidor');
       return false;
     }
-  };
+  }, [apiRequest]);
 
-  // Cargar todas las herramientas
-  const loadTools = async () => {
+  // Función para cargar todas las herramientas
+  const loadTools = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
       
-      const connected = await checkConnection();
-      if (!connected) {
-        throw new Error('No se pudo conectar con el servidor');
+      const response = await apiRequest('/tools');
+      
+      if (response.ok) {
+        const data = await response.json();
+        setTools(Array.isArray(data) ? data : []);
+        setIsConnected(true);
+        console.log('Tools loaded successfully:', data.length);
+      } else {
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'Error al cargar herramientas');
       }
-
-      const backendTools = await toolsApi.getAllTools();
-      const transformedTools = backendTools.map(transformToolData);
-      setTools(transformedTools);
     } catch (error) {
-      console.error('Error al cargar herramientas:', error);
+      console.error('Error loading tools:', error);
       setError(error.message);
+      setIsConnected(false);
+      
+      // En caso de error, mantener las herramientas actuales en lugar de limpiar
+      toast({
+        title: "Error de conexión",
+        description: "No se pudieron cargar las herramientas del servidor",
+        variant: "destructive"
+      });
     } finally {
       setLoading(false);
     }
-  };
+  }, [apiRequest, toast]);
 
-  // Crear nueva herramienta
-  const createTool = async (toolData) => {
+  // Función para crear una nueva herramienta
+  const createTool = useCallback(async (toolData) => {
     try {
       setError(null);
-      const backendData = transformToBackendFormat(toolData);
-      const newTool = await toolsApi.createTool(backendData);
-      const transformedTool = transformToolData(newTool);
-      setTools(prev => [...prev, transformedTool]);
-      return transformedTool;
+      
+      // Limpiar datos antes de enviar
+      const cleanToolData = {
+        uniqueId: toolData.uniqueId.trim(),
+        specificName: toolData.specificName.trim(),
+        generalName: toolData.generalName.trim(),
+        category: toolData.category,
+        status: toolData.status || 'Disponible',
+        maintenance_status: toolData.maintenance_status || 'OK',
+        last_maintenance: toolData.last_maintenance,
+        next_maintenance: toolData.next_maintenance,
+        usage_count: toolData.usage_count || 0
+      };
+
+      const response = await apiRequest('/tools', {
+        method: 'POST',
+        body: JSON.stringify(cleanToolData)
+      });
+
+      if (response.ok) {
+        const newTool = await response.json();
+        setTools(prev => [...prev, newTool]);
+        console.log('Tool created successfully:', newTool);
+        return newTool;
+      } else {
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'Error al crear la herramienta');
+      }
     } catch (error) {
-      console.error('Error al crear herramienta:', error);
+      console.error('Error creating tool:', error);
       setError(error.message);
       throw error;
     }
-  };
+  }, [apiRequest]);
 
-  // Actualizar herramienta
-  const updateTool = async (toolId, toolData) => {
+  // Función para actualizar una herramienta existente
+  const updateTool = useCallback(async (toolId, toolData) => {
     try {
       setError(null);
-      const backendData = transformToBackendFormat(toolData);
-      const updatedTool = await toolsApi.updateTool(toolId, backendData);
-      const transformedTool = transformToolData(updatedTool);
-      setTools(prev => prev.map(tool => 
-        tool._id === toolId ? transformedTool : tool
-      ));
-      return transformedTool;
+      
+      // Limpiar datos antes de enviar
+      const cleanToolData = {
+        uniqueId: toolData.uniqueId.trim(),
+        specificName: toolData.specificName.trim(),
+        generalName: toolData.generalName.trim(),
+        category: toolData.category,
+        status: toolData.status,
+        maintenance_status: toolData.maintenance_status,
+        last_maintenance: toolData.last_maintenance,
+        next_maintenance: toolData.next_maintenance,
+        usage_count: toolData.usage_count || 0
+      };
+
+      const response = await apiRequest(`/tools/${toolId}`, {
+        method: 'PUT',
+        body: JSON.stringify(cleanToolData)
+      });
+
+      if (response.ok) {
+        const updatedTool = await response.json();
+        setTools(prev => prev.map(tool => 
+          tool._id === toolId ? updatedTool : tool
+        ));
+        console.log('Tool updated successfully:', updatedTool);
+        return updatedTool;
+      } else {
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'Error al actualizar la herramienta');
+      }
     } catch (error) {
-      console.error('Error al actualizar herramienta:', error);
+      console.error('Error updating tool:', error);
       setError(error.message);
       throw error;
     }
-  };
+  }, [apiRequest]);
 
-  // Eliminar herramienta
-  const deleteTool = async (toolId) => {
+  // Función para eliminar una herramienta
+  const deleteTool = useCallback(async (toolId) => {
     try {
       setError(null);
-      await toolsApi.deleteTool(toolId);
-      setTools(prev => prev.filter(tool => tool._id !== toolId));
-      return true;
+      
+      const response = await apiRequest(`/tools/${toolId}`, {
+        method: 'DELETE'
+      });
+
+      if (response.ok) {
+        setTools(prev => prev.filter(tool => tool._id !== toolId));
+        console.log('Tool deleted successfully:', toolId);
+        return true;
+      } else {
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'Error al eliminar la herramienta');
+      }
     } catch (error) {
-      console.error('Error al eliminar herramienta:', error);
+      console.error('Error deleting tool:', error);
       setError(error.message);
       throw error;
     }
-  };
+  }, [apiRequest]);
 
-  // Obtener herramienta por ID
-  const getToolById = async (toolId) => {
+  // Función para verificar si un uniqueId existe
+  const checkUniqueId = useCallback(async (uniqueId) => {
+    try {
+      const response = await apiRequest(`/tools/check/${uniqueId}`);
+      
+      if (response.ok) {
+        const data = await response.json();
+        return data.exists;
+      } else {
+        return false;
+      }
+    } catch (error) {
+      console.error('Error checking unique ID:', error);
+      return false;
+    }
+  }, [apiRequest]);
+
+  // Función para obtener herramientas por categoría
+  const getToolsByCategory = useCallback(async (category) => {
     try {
       setError(null);
-      const tool = await toolsApi.getToolById(toolId);
-      return transformToolData(tool);
+      
+      const response = await apiRequest(`/tools/category/${category}`);
+      
+      if (response.ok) {
+        const data = await response.json();
+        return Array.isArray(data) ? data : [];
+      } else {
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'Error al obtener herramientas por categoría');
+      }
     } catch (error) {
-      console.error('Error al obtener herramienta:', error);
+      console.error('Error getting tools by category:', error);
       setError(error.message);
       throw error;
     }
-  };
+  }, [apiRequest]);
 
-  // Efecto para cargar herramientas al montar el componente
+  // Función para obtener herramientas por estado
+  const getToolsByStatus = useCallback(async (status) => {
+    try {
+      setError(null);
+      
+      const response = await apiRequest(`/tools/status/${status}`);
+      
+      if (response.ok) {
+        const data = await response.json();
+        return Array.isArray(data) ? data : [];
+      } else {
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'Error al obtener herramientas por estado');
+      }
+    } catch (error) {
+      console.error('Error getting tools by status:', error);
+      setError(error.message);
+      throw error;
+    }
+  }, [apiRequest]);
+
+  // Cargar herramientas al montar el componente
   useEffect(() => {
-    loadTools();
-  }, []);
+    let isMounted = true;
+
+    const initializeTools = async () => {
+      const isConnected = await checkConnection();
+      
+      if (isConnected && isMounted) {
+        await loadTools();
+      } else if (isMounted) {
+        setLoading(false);
+      }
+    };
+
+    initializeTools();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [checkConnection, loadTools]);
+
+  // Función para refrescar los datos
+  const refreshTools = useCallback(async () => {
+    const isConnected = await checkConnection();
+    if (isConnected) {
+      await loadTools();
+    }
+  }, [checkConnection, loadTools]);
 
   return {
     tools,
@@ -150,7 +266,10 @@ export const useTools = () => {
     createTool,
     updateTool,
     deleteTool,
-    getToolById,
-    checkConnection
+    checkUniqueId,
+    getToolsByCategory,
+    getToolsByStatus,
+    checkConnection,
+    refreshTools
   };
 };

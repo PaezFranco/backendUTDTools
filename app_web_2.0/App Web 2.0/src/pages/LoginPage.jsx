@@ -1,7 +1,6 @@
-
-// pages/LoginPage.jsx
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '@/contexts/AuthContext';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -18,16 +17,17 @@ import { motion } from 'framer-motion';
 import { LogIn, Mail, Lock, Loader2 } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
 
-const LoginPage = ({ onLogin }) => {
+const LoginPage = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   
+  const { login } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
 
   const handleSubmit = async (e) => {
-    e.preventDefault();
+e.preventDefault();
     
     if (!email || !password) {
       toast({
@@ -41,16 +41,16 @@ const LoginPage = ({ onLogin }) => {
     setIsLoading(true);
 
     try {
-      console.log('Attempting login...');
-      const success = await onLogin(email, password);
+      console.log(' Attempting login...');
+      const result = await login(email, password);
 
-      if (success) {
-        console.log('Login successful');
-        navigate('/'); // Redirección al dashboard
+      if (result.success) {
+        console.log(' Login successful, redirecting...');
+        navigate('/', { replace: true });
       } else {
-        console.log(' Login failed');
+        console.log(' Login failed:', result.error);
+        // El toast ya se muestra en el contexto
       }
-
     } catch (error) {
       console.error(' Login error:', error);
       toast({
@@ -66,7 +66,7 @@ const LoginPage = ({ onLogin }) => {
   return (
     <div
       className="min-h-screen relative flex items-center justify-center bg-cover bg-no-repeat bg-center p-4"
-       style={{ backgroundImage: "url('/fondo.png')" }}
+      style={{ backgroundImage: "url('/fondo.png')" }}
     >
       <motion.div
         initial={{ opacity: 0, y: -50 }}
@@ -83,7 +83,7 @@ const LoginPage = ({ onLogin }) => {
             >
               <img src="/utd.png" alt="Logo UTD Tools" className="h-16 mx-auto" />
             </motion.div>
-            <CardTitle className="text-3xl font-bold text-gradient-gold-teal">Tools</CardTitle>
+            <CardTitle className="text-xl sm:text-2xl lg:text-3xl font-bold text-teal-700">Tools</CardTitle>
             <CardDescription className="text-muted-foreground">
               Ingresa tus credenciales de administrador.
             </CardDescription>
@@ -101,7 +101,7 @@ const LoginPage = ({ onLogin }) => {
                   <Input
                     id="email"
                     type="email"
-                    placeholder="daniel.morales@utd.edu.mx"
+                    placeholder="nombre.apellido@utd.edu.mx"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     required
